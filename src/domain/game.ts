@@ -278,14 +278,15 @@ export const formatGameTime = (minuteOfDay: number): string => {
 }
 
 export const advanceGameClock = (state: GameState, realElapsedMs: number, maxGameMinutes = Number.POSITIVE_INFINITY): GameState => {
-  const requestedGameMinutes = Math.max(0, Math.floor((realElapsedMs / 60_000) * state.timeScale))
+  const requestedGameMinutes = Math.max(0, (realElapsedMs / 60_000) * state.timeScale)
   const gameMinutes = Math.min(requestedGameMinutes, maxGameMinutes)
   const totalMinutes = state.minuteOfDay + gameMinutes
   const dayOffset = Math.floor(totalMinutes / (24 * 60))
+  const roundedMinuteOfDay = Math.round((totalMinutes % (24 * 60)) * 100) / 100
   return {
     ...state,
     day: state.day + dayOffset,
-    minuteOfDay: totalMinutes % (24 * 60),
+    minuteOfDay: roundedMinuteOfDay,
   }
 }
 

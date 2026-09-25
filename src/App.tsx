@@ -585,7 +585,7 @@ function TodayScreen({
       <section className="hero-panel">
         <div>
           <span className="soft-label">NGÀY {state.day} · {state.locationName}</span>
-          <div className="hero-clock"><strong>{formatGameTime(state.minuteOfDay)}</strong></div>
+          <div className="hero-clock"><strong>{formatGameTime(state.minuteOfDay)}</strong><small>1 phút thật = 10 phút game</small></div>
           <div className="hero-actions">
             <button type="button" className="primary-button" onClick={onSettle}>Kết ca</button>
             <button type="button" className="soft-button" onClick={onFastForward}>Tua nhanh 1 giờ</button>

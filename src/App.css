@@ -312,16 +312,17 @@ button:disabled {
 
 .hero-clock {
   display: flex;
-  align-items: baseline;
-  gap: 9px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   margin: 8px 0 4px;
 }
 
-.hero-clock span {
+.hero-clock small {
   color: var(--ink-soft);
-  font-size: 0.62rem;
-  font-weight: 900;
-  letter-spacing: 0.12em;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .hero-clock strong {
@@ -329,6 +330,7 @@ button:disabled {
   font-size: clamp(2.2rem, 10vw, 3.7rem);
   letter-spacing: -0.07em;
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .hero-panel p {
@@ -969,19 +971,31 @@ button:disabled {
 
 .notice-popup {
   position: fixed;
-  right: 12px;
-  bottom: calc(76px + env(safe-area-inset-bottom));
-  left: 12px;
+  top: calc(10px + env(safe-area-inset-top));
+  right: 10px;
   z-index: 60;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  width: min(320px, calc(100vw - 20px));
   padding: 13px 14px;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--paper);
   box-shadow: 0 14px 34px rgba(76, 59, 50, 0.2);
+  animation: notice-slide-in 0.22s ease-out;
+}
+
+@keyframes notice-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .notice-popup.success { border-color: #a8d5c0; }
