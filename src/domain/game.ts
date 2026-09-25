@@ -48,7 +48,9 @@ export interface FinancialSummary {
   taxVND: number
   compensationVND: number
   repairVND: number
+  waivedVND: number
   netCashChangeVND: number
+  takeHomeVND: number
 }
 
 export interface Guest {
@@ -110,9 +112,28 @@ export interface PaymentRecord {
   roomId: string
   stayId: string
   day: number
+  paidAtGameMinute?: number
   roomChargeVND: number
   extraChargesVND: number
+  waivedVND: number
+  extraChargesNote: string
   totalVND: number
+}
+
+export type ServiceChargeKind = 'minibar' | 'room_service' | 'laundry' | 'tour_desk'
+export type ServiceChargeStatus = 'Pending' | 'Paid' | 'Waived' | 'Forced'
+
+export interface ServiceCharge {
+  id: string
+  stayId: string
+  guestId: string
+  roomId: string
+  kind: ServiceChargeKind
+  amountVND: number
+  note: string
+  guestWillingToPay: boolean
+  status: ServiceChargeStatus
+  resolvedDay?: number
 }
 
 export interface Review {
@@ -157,11 +178,13 @@ export interface GameState {
   reservations: Reservation[]
   stays: Stay[]
   payments: PaymentRecord[]
+  serviceCharges: ServiceCharge[]
   reviews: Review[]
   compensationRequests: CompensationRequest[]
   lastSettlement: FinancialSummary | null
   arrivedSlots: string[]
   lastClosedDay: number
+  lastSettledGameMinute: number
   lastEvent: string
   lastSavedAt: number
 }
@@ -373,11 +396,12 @@ export const processArrivals = (state: GameState): GameState => {
     if (stay.status !== 'AwaitingCheckout' || typeof stay.checkoutRequestedGameMinute !== 'number') {
       return false
     }
-    return currentGameMinute - stay.checkoutRequestedGameMinute >= 6 * 60
+    return currentGameMinute - stay.checkoutRequestedGameMinute >= 24 * 60
   })
   overdueStays.forEach((stay) => {
     const guest = next.guests.find((item) => item.id === stay.guestId)
-    const settled = checkoutGuest(next, stay.id, 0)
+    const charge = next.serviceCharges.find((item) => item.stayId === stay.id && item.status === 'Pending')
+    const settled = checkoutGuest(next, stay.id, charge?.guestWillingToPay ? 'collect' : 'waive')
     const review = settled.reviews[settled.reviews.length - 1]
     if (review) {
       review.rating = Math.min(review.rating, 3)
@@ -485,40 +509,52 @@ export const evaluatePrice = (guest: Guest, room: Room, nightlyRateVND: number, 
 }
 
 const reviewOpeners: Record<GuestType, string[]> = {
-  solo: ['Tôi cảm thấy chuyến ở một mình khá thoải mái.', 'Quản lý có phản hồi nhanh và dễ trao đổi.'],
-  tourist: ['Chuyến nghỉ của chúng tôi khá đáng nhớ.', 'Vị trí khách sạn rất thuận tiện cho việc đi tham quan.'],
-  business: ['Tôi đến đây để làm việc và cần một nơi ổn định.', 'Phòng đáp ứng tốt cho các buổi họp.'],
-  family: ['Cả gia đình chúng tôi đều cảm thấy dễ chịu khi ở đây.', 'Không gian phòng phù hợp cho chuyến đi cùng bé.'],
-  couple: ['Chúng tôi muốn một kỷ niệm lãng mạn và đã có trải nghiệm ấm áp.', 'Buổi lưu trú của chúng tôi khá riêng tư.'],
+  solo: ['Tôi cảm thấy chuyến ở một mình khá thoải mái.', 'Quản lý có phản hồi nhanh và dễ trao đổi.', 'Chuyến lưu trú ngắn của tôi diễn ra đúng như kế hoạch.'],
+  tourist: ['Chuyến nghỉ của chúng tôi khá đáng nhớ.', 'Vị trí khách sạn rất thuận tiện cho việc đi tham quan.', 'Chúng tôi đã ghé khách sạn nhiều lần và lần này không phải ngoại lệ.'],
+  business: ['Tôi đến đây để làm việc và cần một nơi ổn định.', 'Phòng đáp ứng tốt cho các buổi họp.', 'Lịch làm việc của tôi khá kín nên mọi tiện nghi đều có giá trị.'],
+  family: ['Cả gia đình chúng tôi đều cảm thấy dễ chịu khi ở đây.', 'Không gian phòng phù hợp cho chuyến đi cùng bé.', 'Các bé nhà tôi thích ở khách sạn hơn cả nhà.'],
+  couple: ['Chúng tôi muốn một kỷ niệm lãng mạn và đã có trải nghiệm ấm áp.', 'Buổi lưu trú của chúng tôi khá riêng tư.', 'Đây là kỷ niệm đáng nhớ của chúng tôi.'],
 }
 
 const reviewPositives: Record<GuestType, string[]> = {
-  solo: ['Phòng yên tĩnh, WiFi ổn định và giá hợp lý.', 'Nhân viên không làm phiền nhưng vẫn sẵn sàng hỗ trợ.'],
-  tourist: ['View đẹp, phòng sạch và nhân viên chú ý khách.', 'Giá tốt so với trải nghiệm nhận được.'],
-  business: ['Bàn làm việc, WiFi tốt và không gian đủ yên tĩnh.', 'Vị trí thuận tiện cho lịch làm việc.'],
-  family: ['Phòng rộng, tiện nghi hữu ích và nhân viên thân thiện.', 'Gia đình chúng tôi cảm thấy được chăm sóc chu đáo.'],
-  couple: ['Không gian riêng tư, view đẹp và phòng ấm áp.', 'Mọi chi tiết đều tạo cảm giác nghỉ dưỡng thư giãn.'],
+  solo: ['Phòng yên tĩnh, WiFi ổn định và giá hợp lý.', 'Nhân viên không làm phiền nhưng vẫn sẵn sàng hỗ trợ.', 'Thời gian nhận phòng nhanh và dễ thao tác.'],
+  tourist: ['View đẹp, phòng sạch và nhân viên chú ý khách.', 'Giá tốt so với trải nghiệm nhận được.', 'Bãi xe và khu vực xung quanh rất tiện.'],
+  business: ['Bàn làm việc, WiFi tốt và không gian đủ yên tĩnh.', 'Vị trí thuận tiện cho lịch làm việc.', 'Dịch vụ nhận phòng diễn ra nhanh gọn.'],
+  family: ['Phòng rộng, tiện nghi hữu ích và nhân viên thân thiện.', 'Gia đình chúng tôi cảm thấy được chăm sóc chu đáo.', 'Bữa sáng và khu vực sinh hoạt chung rất hợp lý.'],
+  couple: ['Không gian riêng tư, view đẹp và phòng ấm áp.', 'Mọi chi tiết đều tạo cảm giác nghỉ dưỡng thư giãn.', 'Buổi tối ở đây rất dễ chịu.'],
 }
 
 const reviewCritiques: Record<GuestType, string[]> = {
-  solo: ['Tôi mong phòng được bảo trì tốt hơn.', 'Có một vài thiết bị trong phòng cần cập nhật.'],
-  tourist: ['Phòng cần được vệ sinh kỹ hơn.', 'Một số tiện nghi tôi mong đợi chưa có.'],
-  business: ['Tiếng ồn vào buổi tối ảnh hưởng đến công việc.', 'Tôi cần phòng được bảo trì thường xuyên hơn.'],
-  family: ['Phòng xuống cấp khiến gia đình không thoải mái.', 'Khu vực lối đi chưa thuận tiện cho các bé.'],
-  couple: ['View bị che bởi một phần và không đúng như kỳ vọng.', 'Chúng tôi cần thêm sự riêng tư cho buổi tối.'],
+  solo: ['Tôi mong phòng được bảo trì tốt hơn.', 'Có một vài thiết bị trong phòng cần cập nhật.', 'Quầy lễ tân hơi bận nên tôi chờ lâu hơn mong đợi.'],
+  tourist: ['Phòng cần được vệ sinh kỹ hơn.', 'Một số tiện nghi tôi mong đợi chưa có.', 'Việc dọn phòng diễn ra chậm hơn giờ dự kiến.'],
+  business: ['Tiếng ồn vào buổi tối ảnh hưởng đến công việc.', 'Tôi cần phòng được bảo trì thường xuyên hơn.', 'Thiết bị trong phòng hơi cũ so với giá.'],
+  family: ['Phòng xuống cấp khiến gia đình không thoải mái.', 'Khu vực lối đi chưa thuận tiện cho các bé.', 'Nhiệt độ phòng chưa ổn định khi có bé.'],
+  couple: ['View bị che bởi một phần và không đúng như kỳ vọng.', 'Chúng tôi cần thêm sự riêng tư cho buổi tối.', 'Ánh sáng phòng hơi tối vào một số thời điểm.'],
 }
 
-const createReview = (guest: Guest, room: Room, day: number): Review => {
+const reviewNotes: Record<GuestType, string[]> = {
+  solo: ['Tôi sẽ quay lại khi đi công tác lần sau.', 'Tỷ lệ giá phòng và chất lượng ở mức chấp nhận được.', 'Trải nghiệm tốt cho khách đi một mình.'],
+  tourist: ['Rất đáng để ở thêm vài đêm nữa.', 'Nhân viên tư vấn khá nhiệt tình.', 'Khu vực xung quanh có nhiều lựa chọn ăn uống.'],
+  business: ['Tôi sẽ đặt phòng này lần sau.', 'Phù hợp với khách đi công tác ngắn ngày.', 'Giá hợp lý cho khách doanh nghiệp.'],
+  family: ['Các bé rất muốn ở thêm.', 'Phòng đáp ứng tốt với gia đình bốn người.', 'Nhân viên có thể đưa thêm gối cho trẻ nhỏ khi cần.'],
+  couple: ['Chúng tôi đã chụp ảnh kỷ niệm ở đây.', 'Thời điểm nhận phòng thuận lợi cho chuyến đi của chúng tôi.', 'Đáng để quay lại vào kỳ nghỉ tới.'],
+}
+
+const createReview = (guest: Guest, room: Room, day: number, variantSeed = 0): Review => {
   const rating = guest.satisfaction >= 90 ? 5 : guest.satisfaction >= 78 ? 4 : guest.satisfaction >= 62 ? 3 : guest.satisfaction >= 45 ? 2 : 1
-  const variant = Math.abs(day + room.number + guest.nights) % 2
+  const variant = Math.abs(day * 7 + room.number * 3 + guest.nights * 5 + variantSeed) % 3
   const opener = reviewOpeners[guest.type][variant]
   const positive = reviewPositives[guest.type][variant]
   const critique = reviewCritiques[guest.type][variant]
-  const text = rating >= 4 ? `${opener} ${positive}` : rating === 3 ? `${opener} ${positive} ${critique}` : `${opener} ${critique}`
+  const note = reviewNotes[guest.type][variant]
+  const conditionNote = room.condition >= 85 ? ' Phòng được bảo trì tốt khi nhận phòng.' : room.condition >= 60 ? ' Phòng cần được bảo trì thêm một chút.' : ' Phòng xuống cấp rõ rệt vào cuối lưu trú.'
+  const valueNote = guest.satisfaction >= 85 ? '' : ' Giá phòng chưa tương xứng hoàn toàn với trải nghiệm.'
+  const text = rating >= 4 ? `${opener} ${positive}${note}${conditionNote}` : rating === 3 ? `${opener} ${positive} ${critique}${conditionNote}${valueNote}` : `${opener} ${critique}${conditionNote}${valueNote}`
   const reasons = [getRoomTypeLabel(room.type), getViewLabel(room.view)]
   if (room.condition < 60) reasons.push('room_condition')
   if (guest.satisfaction < 70) reasons.push('stay_value')
   if (room.condition < 40) reasons.push('maintenance_needed')
+  if (rating >= 4) reasons.push('good_stay')
   return {
     id: `review-${day}-${crypto.randomUUID()}`,
     guestId: guest.id,
@@ -529,6 +565,93 @@ const createReview = (guest: Guest, room: Room, day: number): Review => {
     text,
     reasons,
   }
+}
+
+const serviceChargeTemplates: { kind: ServiceChargeKind; weight: number; notes: string[]; min: number; max: number; step: number }[] = [
+  {
+    kind: 'minibar',
+    weight: 34,
+    min: 90_000,
+    max: 460_000,
+    step: 10_000,
+    notes: [
+      'Minibar: 2 chai nước suối, 1 hộp sữa và 2 gói snack.',
+      'Minibar: 1 chai rượu vang nhỏ và 1 đĩa phô mai.',
+      'Minibar: 3 lon nước ngọt và 1 gói bánh quy.',
+      'Minibar: 1 bộ chè đá và 2 hộp nước trái cây.',
+    ],
+  },
+  {
+    kind: 'room_service',
+    weight: 30,
+    min: 180_000,
+    max: 640_000,
+    step: 20_000,
+    notes: [
+      'Ăn uống tại phòng: 2 phần cơm nhà và 1 phần canh.',
+      'Ăn uống tại phòng: bữa sáng cho 2 người và cà phê.',
+      'Đồ ăn đêm: 1 phần mì và 2 ly nước mía.',
+      'Bữa tối phục vụ tại phòng cho cả nhóm khách.',
+    ],
+  },
+  {
+    kind: 'laundry',
+    weight: 20,
+    min: 120_000,
+    max: 340_000,
+    step: 10_000,
+    notes: [
+      'Giặt ủi: 4 áo, 2 quần và 1 bộ vest.',
+      'Giặt nhanh 4 giờ cho 3 bộ đồ.',
+      'Ủi hấp một bộ đồ trắng và 2 váy.',
+    ],
+  },
+  {
+    kind: 'tour_desk',
+    weight: 16,
+    min: 150_000,
+    max: 520_000,
+    step: 10_000,
+    notes: [
+      'Đặt tour: vé tham quan Hòn Ngọc và vé cầu Rồng.',
+      'Đặt vé máy bay nội địa qua bàn lễ tân.',
+      'Thuê xe đưa đón sân bay và hướng dẫn địa phương.',
+    ],
+  },
+]
+
+const pickRandom = (min: number, max: number, step: number): number => {
+  const steps = Math.max(1, Math.round((max - min) / step))
+  return min + Math.floor(Math.random() * (steps + 1)) * step
+}
+
+export const getStayServiceCharge = (state: GameState, stayId: string): ServiceCharge | undefined =>
+  state.serviceCharges.find((charge) => charge.stayId === stayId && charge.status === 'Pending')
+
+const rollServiceCharge = (state: GameState, stay: Stay, guest: Guest, room: Room): void => {
+  if (Math.random() > 0.55) {
+    return
+  }
+  const totalWeight = serviceChargeTemplates.reduce((sum, template) => sum + template.weight, 0)
+  let roll = Math.random() * totalWeight
+  const template = serviceChargeTemplates.find((item) => {
+    roll -= item.weight
+    return roll <= 0
+  }) ?? serviceChargeTemplates[0]
+  const note = template.notes[Math.floor(Math.random() * template.notes.length)]
+  const amountVND = pickRandom(template.min, template.max, template.step)
+  const guestWillingToPay = Math.random() > (guest.satisfaction < 70 ? 0.55 : 0.3)
+  state.serviceCharges.push({
+    id: `charge-${crypto.randomUUID()}`,
+    stayId: stay.id,
+    guestId: guest.id,
+    roomId: room.id,
+    kind: template.kind,
+    amountVND,
+    note: `${note} (${room.number})`,
+    guestWillingToPay,
+    status: 'Pending',
+  })
 }
 
 const createStayForAcceptedOffer = (state: GameState, offer: Offer, room: Room, guest: Guest): void => {
@@ -544,14 +667,15 @@ const createStayForAcceptedOffer = (state: GameState, offer: Offer, room: Room, 
     extraBed: offer.extraBed,
     status: 'CheckedIn',
   })
-  state.stays.push({
+  const stay: Stay = {
     id: `stay-${crypto.randomUUID()}`,
     reservationId,
     guestId: guest.id,
     roomId: room.id,
     nightsCompleted: 0,
     status: 'Active',
-  })
+  }
+  state.stays.push(stay)
   room.state = 'Occupied'
   room.guestId = guest.id
   guest.state = 'CheckedIn'
@@ -563,6 +687,7 @@ const createStayForAcceptedOffer = (state: GameState, offer: Offer, room: Room, 
   const conditionPenalty = room.condition < 60 ? Math.round((60 - room.condition) * 1.2) : 0
   guest.satisfaction = Math.max(30, Math.min(100, Math.round(fit.score * 0.7 + valueScore * 0.2 + room.condition * 0.1 - conditionPenalty)))
   guest.lastEvent = 'Khách đã nhận phòng'
+  rollServiceCharge(state, stay, guest, room)
 }
 
 export const proposeOffer = (state: GameState, guestId: string, roomId: string, nightlyRateVND: number, extraBed = false): GameState => {
@@ -655,6 +780,7 @@ export const settleDay = (state: GameState, closingDayInput = state.day): GameSt
     }
 
     stay.nightsCompleted += 1
+    guest.nightsCompleted = stay.nightsCompleted
     const wear = room.type === 'deluxe' ? 4 : 6
     room.condition = Math.max(0, room.condition - wear)
     if (stay.nightsCompleted < guest.nights) {
@@ -670,8 +796,8 @@ export const settleDay = (state: GameState, closingDayInput = state.day): GameSt
     waitingCheckout += 1
   })
 
-  const lastSettledDay = next.lastSettlement?.day ?? 0
-  const revenue = next.payments.filter((payment) => payment.day > lastSettledDay).reduce((total, payment) => total + payment.totalVND, 0)
+  const closedAtGameMinute = next.day * 24 * 60 + next.minuteOfDay
+  const revenue = next.payments.filter((payment) => getPaymentGameMinute(payment) > next.lastSettledGameMinute).reduce((total, payment) => total + payment.totalVND, 0)
   const operatingCost = 800_000
   const profitBeforeTax = revenue - operatingCost
   const tax = profitBeforeTax > 0 ? Math.round(profitBeforeTax * 0.2) : 0
@@ -685,9 +811,12 @@ export const settleDay = (state: GameState, closingDayInput = state.day): GameSt
     taxVND: tax,
     compensationVND: 0,
     repairVND: 0,
+    waivedVND: 0,
     netCashChangeVND: profitBeforeTax - tax,
+    takeHomeVND: revenue - operatingCost - tax,
   }
   next.lastClosedDay = closingDay
+  next.lastSettledGameMinute = closedAtGameMinute
   next.day = closingDay + 1
   next.minuteOfDay = 8 * 60
   next.arrivedSlots = []
@@ -695,7 +824,14 @@ export const settleDay = (state: GameState, closingDayInput = state.day): GameSt
   return processArrivals(next)
 }
 
-export const checkoutGuest = (state: GameState, stayId: string, extraChargesVND = 0): GameState => {
+export const getUnsettledRevenueVND = (state: GameState): number =>
+  state.payments.filter((payment) => getPaymentGameMinute(payment) > state.lastSettledGameMinute).reduce((total, payment) => total + payment.totalVND, 0)
+
+const getPaymentGameMinute = (payment: PaymentRecord): number => payment.paidAtGameMinute ?? (payment.day + 1) * 24 * 60 - 1
+
+export type ServiceChargeDecision = 'collect' | 'waive' | 'force'
+
+export const checkoutGuest = (state: GameState, stayId: string, decision: ServiceChargeDecision = 'collect'): GameState => {
   const next = structuredClone(state)
   const stay = next.stays.find((item) => item.id === stayId)
   if (!stay || stay.status !== 'AwaitingCheckout') {
@@ -708,16 +844,46 @@ export const checkoutGuest = (state: GameState, stayId: string, extraChargesVND 
     return state
   }
 
+  const charge = next.serviceCharges.find((item) => item.stayId === stay.id && item.status === 'Pending')
+  let extraChargesVND = 0
+  let waivedVND = 0
+  let note = 'Khách không dùng dịch vụ thêm.'
+  let forcedCharge = false
+
+  if (charge) {
+    if (charge.guestWillingToPay || decision === 'force') {
+      extraChargesVND = charge.amountVND
+      forcedCharge = !charge.guestWillingToPay
+      charge.status = forcedCharge ? 'Forced' : 'Paid'
+      note = `${charge.note} — khách ${forcedCharge ? 'không chịu trả nhưng quầy vẫn thu' : 'chịu trả'}.`
+    } else {
+      waivedVND = charge.amountVND
+      charge.status = 'Waived'
+      note = `${charge.note} — khách từ chối trả, quầy miễn phí.`
+    }
+    charge.resolvedDay = next.day
+  }
+
+  if (forcedCharge) {
+    guest.satisfaction = Math.max(5, guest.satisfaction - 14)
+    next.reputation = Math.max(0, next.reputation - 2)
+  } else if (waivedVND > 0) {
+    guest.satisfaction = Math.min(100, guest.satisfaction + 4)
+  }
+
   const roomChargeVND = reservation.nightlyRateVND * guest.nights
-  const totalVND = roomChargeVND + Math.max(0, extraChargesVND)
+  const totalVND = roomChargeVND + extraChargesVND
   next.payments.push({
     id: `payment-${crypto.randomUUID()}`,
     guestId: guest.id,
     roomId: room.id,
     stayId: stay.id,
     day: next.day,
+    paidAtGameMinute: next.day * 24 * 60 + next.minuteOfDay,
     roomChargeVND,
-    extraChargesVND: Math.max(0, extraChargesVND),
+    extraChargesVND,
+    waivedVND,
+    extraChargesNote: note,
     totalVND,
   })
   next.cashVND += totalVND
@@ -725,12 +891,18 @@ export const checkoutGuest = (state: GameState, stayId: string, extraChargesVND 
   stay.status = 'Completed'
   reservation.status = 'Completed'
   guest.state = 'ReviewCompleted'
-  guest.lastEvent = 'Đã hoàn tất lưu trú'
+  guest.lastEvent = forcedCharge ? 'Đã hoàn tất lưu trú (bị ép thu phí)' : 'Đã hoàn tất lưu trú'
   room.state = room.condition < 40 ? 'Maintenance' : 'Available'
   delete room.guestId
-  const review = createReview(guest, room, next.day)
+  const review = createReview(guest, room, next.day, forcedCharge ? 1 : 0)
+  if (forcedCharge) {
+    review.rating = Math.min(review.rating, 2)
+    review.text = `${review.text} Nhân viên vẫn thu phí dịch vụ dù khách đã nói không dùng và từ chối trả.`
+    review.reasons.push('forced_service_charge')
+  }
   next.reviews.push(review)
-  next.reputation = Math.max(0, Math.min(100, Math.round(next.reputation + (review.rating - 3) * 1.5)))
+  next.reputation = Math.max(0, Math.min(100, next.reputation + (review.rating - 3) * 1.5))
+  next.reputation = Math.round(next.reputation)
   next.reviewCount += 1
 
   if (room.condition < 60 || guest.satisfaction < 70) {
@@ -764,6 +936,7 @@ export const repairRoom = (state: GameState, roomId: string): GameState => {
   if (next.lastSettlement) {
     next.lastSettlement.repairVND += cost
     next.lastSettlement.netCashChangeVND -= cost
+    next.lastSettlement.takeHomeVND -= cost
   }
   next.lastEvent = `Đã sửa phòng ${room.number} với chi phí ${formatVnd(cost)}`
   return next
@@ -794,6 +967,7 @@ export const resolveCompensation = (state: GameState, requestId: string, accept:
     if (next.lastSettlement) {
       next.lastSettlement.compensationVND += request.amountVND
       next.lastSettlement.netCashChangeVND -= request.amountVND
+      next.lastSettlement.takeHomeVND -= request.amountVND
     }
     next.reputation = Math.min(100, next.reputation + 1)
     next.lastEvent = `Đã bồi thường ${formatVnd(request.amountVND)} cho khách`
@@ -804,6 +978,10 @@ export const resolveCompensation = (state: GameState, requestId: string, accept:
   }
   return next
 }
+
+export const getTakeHomeVND = (state: GameState): number => state.totalRevenueVND - state.totalCostsVND - state.taxPaidVND
+
+export const getWaivedTotalVND = (state: GameState): number => state.payments.reduce((total, payment) => total + (payment.waivedVND ?? 0), 0)
 
 export const createNewGame = (hotelName: string): GameState => {
   const state: GameState = {
@@ -825,11 +1003,13 @@ export const createNewGame = (hotelName: string): GameState => {
     reservations: [],
     stays: [],
     payments: [],
+    serviceCharges: [],
     reviews: [],
     compensationRequests: [],
     lastSettlement: null,
     arrivedSlots: [],
     lastClosedDay: 0,
+    lastSettledGameMinute: 0,
     lastEvent: 'Khách sạn đã mở cửa',
     lastSavedAt: Date.now(),
   }
@@ -853,10 +1033,30 @@ export const normalizeGameState = (value: unknown): GameState | null => {
       extraBedFeeVND: room.extraBedFeeVND ?? 150_000,
     }))
     normalized.compensationRequests = Array.isArray(candidate.compensationRequests) ? candidate.compensationRequests : []
-    normalized.lastSettlement = candidate.lastSettlement ?? null
+    normalized.lastSettlement = candidate.lastSettlement
+      ? {
+        ...candidate.lastSettlement,
+        waivedVND: candidate.lastSettlement.waivedVND ?? 0,
+        takeHomeVND: candidate.lastSettlement.takeHomeVND
+          ?? candidate.lastSettlement.revenueVND
+            - candidate.lastSettlement.operatingCostVND
+            - candidate.lastSettlement.taxVND
+            - candidate.lastSettlement.compensationVND
+            - candidate.lastSettlement.repairVND,
+      }
+      : null
     normalized.offers = normalized.offers.map((offer) => ({ ...offer, extraBed: offer.extraBed ?? false }))
     normalized.reservations = normalized.reservations.map((reservation) => ({ ...reservation, extraBed: reservation.extraBed ?? false }))
     normalized.payments = Array.isArray(candidate.payments) ? candidate.payments : []
+    normalized.payments = normalized.payments.map((payment) => ({
+      ...payment,
+      waivedVND: payment.waivedVND ?? 0,
+      extraChargesNote: payment.extraChargesNote ?? 'Không có dịch vụ thêm.',
+    }))
+    normalized.serviceCharges = Array.isArray(candidate.serviceCharges) ? candidate.serviceCharges : []
+    normalized.lastSettledGameMinute = typeof candidate.lastSettledGameMinute === 'number'
+      ? candidate.lastSettledGameMinute
+      : normalized.lastSettlement ? (normalized.lastSettlement.day + 1) * 24 * 60 : 0
     normalized.guests = normalized.guests.map((guest) => ({
       ...guest,
       dialogue: guest.dialogue ?? dialogues[guest.type] ?? 'Tôi cần một phòng phù hợp cho chuyến đi.',

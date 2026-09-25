@@ -1232,6 +1232,86 @@ button:disabled {
   text-align: right;
 }
 
+.charge-card {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: #fffaf0;
+}
+
+.charge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.charge-head strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+.charge-head span {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.chip-ok {
+  color: #2f6b4f;
+  background: #d9efe1;
+}
+
+.chip-warn {
+  color: #8a4a24;
+  background: #f8ddc8;
+}
+
+.charge-card p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.warn-note {
+  color: #a4562a;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.muted-note {
+  margin: 0 0 14px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.finance-total-row {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-soft);
+}
+
+.finance-total-row span {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.finance-total-row b {
+  color: var(--teal-deep);
+  font-size: 1.02rem;
+}
+
+.payment-note {
+  max-width: 220px;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
 .payment-list {
   display: grid;
   gap: 8px;
